@@ -1,0 +1,118 @@
+---
+title: "Practical Machine Learning Project"
+author: "Kate Xia"
+date: "January 23, 2019"
+output: html_document
+---
+#Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise.
+
+#Data Processing
+```{r, cache=TRUE, message=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(rattle)
+```
+##Download and read the data
+```{r, cache=TRUE}
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl))
+test <- read.csv(url(testUrl))
+dim(training)
+dim(test)
+```
+The training data set contains 19622 observations and 160 variables, while the test data set contains 20 observations and 160 variables. The "classe" variable in the training set is the outcome to predict.
+
+##Clean the data
+```{r, cache=TRUE}
+sum(complete.cases(training))
+```
+First, we remove columns that contain NA missing values.
+```{r, cache=TRUE}
+training <- training[, colSums(is.na(training)) == 0]
+test <- test[, colSums(is.na(test)) == 0]
+```
+Next, we get rid of some columns that do not contribute much to the accelerometer measurements.
+```{r, cache=TRUE}
+classe <- training$classe
+trainRemove <- grepl("^X|timestamp|window", names(training))
+training <- training[, !trainRemove]
+trainCleaned <- training[, sapply(training, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(test))
+test <- test[, !testRemove]
+testCleaned <- test[, sapply(test, is.numeric)]
+dim(trainCleaned)
+dim(testCleaned)
+```
+After cleaning, the new training and test data set has only 53 columns.
+
+##Slice the data
+
+Then, we can split the cleaned training set into a pure training data set (75%) and a validation data set (25%). We will use the validation data set to conduct cross validation in future steps.
+```{r, cache=TRUE}
+set.seed(18974) # For reproducibile purpose
+inTrain <- createDataPartition(trainCleaned$classe, p=0.75, list=F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
+```
+
+#Data Modeling
+
+In the following sections, we will test 3 different models : classification tree, random forest, and gradient boosting method.
+
+In order to limit the effects of overfitting, and improve the efficicency of the models, we will use the cross-validation technique. We will use 5 folds (usually, 5 or 10 can be used, but 10 folds gives higher run times with no significant increase of the accuracy).
+
+##Prediction with classification tree
+```{r, cache=TRUE, message=FALSE}
+trControl <- trainControl(method="cv", number=5)
+model_CT <- train(classe~., data=trainData, method="rpart", trControl=trControl)
+fancyRpartPlot(model_CT$finalModel)
+trainpred <- predict(model_CT,newdata=testData)
+confMatCT <- confusionMatrix(testData$classe,trainpred)
+confMatCT$table
+confMatCT$overall[1]
+```
+We can notice that the accuracy of this first model is very low (about 48%). This means that the outcome class will not be predicted very well by the other predictors.
+
+##Prediction with random forests
+```{r, cache=TRUE, message=FALSE}
+model_RF <- train(classe~., data=trainData, method="rf", trControl=trControl, verbose=FALSE)
+print(model_RF)
+plot(model_RF,main="Accuracy of Random forest model by number of predictors")
+trainpred <- predict(model_RF,newdata=testData)
+confMatRF <- confusionMatrix(testData$classe,trainpred)
+confMatRF$table
+confMatRF$overall[1]
+names(model_RF$finalModel)
+model_RF$finalModel$classes
+plot(model_RF$finalModel,main="Model error of Random forest model by number of trees")
+MostImpVars <- varImp(model_RF)
+MostImpVars
+```
+With random forest, we reach an accuracy of 99.4% using cross-validation with 5 steps.
+
+##Prediction with gradient boosting method
+```{r, cache=TRUE, message=FALSE}
+model_GBM <- train(classe~., data=trainData, method="gbm", trControl=trControl, verbose=FALSE)
+print(model_GBM)
+plot(model_GBM)
+trainpred <- predict(model_GBM,newdata=testData)
+confMatGBM <- confusionMatrix(testData$classe,trainpred)
+confMatGBM$table
+confMatGBM$overall[1]
+```
+Precision with 5 folds is 96.6%.
+
+#Conclusion
+This shows that the random forest model is the best one. We will then use it to predict the values of classe for the test data set.
+```{r}
+FinalTestPred <- predict(model_RF,newdata=testCleaned)
+FinalTestPred
+```
